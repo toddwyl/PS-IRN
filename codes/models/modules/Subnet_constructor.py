@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import models.modules.module_util as mutil
+from models.modules.RDB import RDNBlock
 
 
 class DenseBlock(nn.Module):
@@ -188,6 +189,16 @@ def subnet(net_structure_dict, init='xavier', instance_norm=False):
                     return ConvBlock(channel_in, channel_out, init)
                 else:
                     return ConvBlock(channel_in, channel_out)
+            elif net_structure == 'RDN':
+                if init == 'xavier':
+                    return RDNBlock(channel_in, channel_out, init)
+                else:
+                    return RDNBlock(channel_in, channel_out)
+            elif net_structure == 'Phy':
+                if init == 'xavier':
+                    return PhyBlock(channel_in, channel_out, init)
+                else:
+                    return PhyBlock(channel_in, channel_out)
             else:
                 return None
         return constructor
