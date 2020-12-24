@@ -79,6 +79,11 @@ class IRNModel(BaseModel):
                         lr_scheduler.CosineAnnealingLR_Restart(
                             optimizer, train_opt['T_period'], eta_min=train_opt['eta_min'],
                             restarts=train_opt['restarts'], weights=train_opt['restart_weights']))
+            elif train_opt['lr_scheme'] == 'LinearLR':
+                for optimizer in self.optimizers:
+                    self.schedulers.append(
+                        lr_scheduler.LinearLR_Restart(
+                            optimizer, train_opt['lr_steps']))
             else:
                 raise NotImplementedError(
                     'MultiStepLR learning rate scheme is enough.')
@@ -101,12 +106,18 @@ class IRNModel(BaseModel):
         return torch.zeros(tuple(dims)).to(self.device)
 
     def loss_forward(self, out, y, z, z_gt=None):
-        l_forw_fit = self.train_opt['lambda_fit_forw'] * \
-            self.Reconstruction_forw(out, y)
+        if self.train_opt['lambda_fit_forw'] == 0:
+            l_forw_fit = torch.FloatTensor([0.]).to(self.device)
+        else:
+            l_forw_fit = self.train_opt['lambda_fit_forw'] * \
+                self.Reconstruction_forw(out, y)
         if z_gt is None:
             z_gt = torch.zeros_like(z)
-        l_forw_ce = self.train_opt['lambda_ce_forw'] * \
-            self.Reconstruction_forw(z, z_gt)
+        if self.train_opt['lambda_ce_forw'] == 0:
+            l_forw_ce = torch.FloatTensor([0.]).to(self.device)
+        else:
+            l_forw_ce = self.train_opt['lambda_ce_forw'] * \
+                self.Reconstruction_forw(z, z_gt)
 
         return l_forw_fit, l_forw_ce
 

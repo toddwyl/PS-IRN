@@ -1,7 +1,7 @@
 
 #### general settings
 
-name: 01_IRN_DB_x2_scratch_DIV2K
+name: 01_IRN_RDB_x2_scratch_DIV2K
 use_tb_logger: true
 model: IRN
 distortion: sr
@@ -52,7 +52,7 @@ network_G:
 #### path
 
 path:
-  pretrain_model_G: /home/ices/yl/SRDict/PS-IRN/experiments/01_IRN_DB_x2_scratch_DIV2K399000/models/399000_G.pth
+  pretrain_model_G: ~
   strict_load: true
   resume_state: ~
 
@@ -71,11 +71,12 @@ train:
   get_batch_method: repeat
 
   warmup_iter: -1  # no warm up
-  # lr_scheme: MultiStepLR
+  lr_scheme: MultiStepLR
   # lr_steps: [200000, 400000, 600000, 800000]
-  # lr_gamma: 0.5
-  lr_scheme: LinearLR
-  lr_steps: 1000000
+  lr_steps: [30000, 60000, 90000, 120000, 150000, 180000, 210000, 240000, 270000, 300000, 330000, 360000, 390000, 420000]
+  lr_gamma: 0.5
+  # lr_scheme: LinearLR
+  # lr_steps: 1000000
   pixel_criterion_forw: l2
   # pixel_criterion_back: l1
   pixel_criterion_back: l2

@@ -1,7 +1,7 @@
 
 #### general settings
 
-name: 01_IRN_DB_x2_scratch_DIV2K
+name: 01_IRN_DB_x2_scratch_DIV2K_norm_simple
 use_tb_logger: true
 model: IRN
 distortion: sr
@@ -42,17 +42,17 @@ network_G:
   preprocess_op: PixelShuffle
   in_nc: 3
   out_nc: 3
-  block_num: [8]
+  block_num: [4]
   scale: 2
   init: xavier
-  # instance_norm: true
-  instance_norm: false
+  instance_norm: true
+  # instance_norm: false
 
 
 #### path
 
 path:
-  pretrain_model_G: /home/ices/yl/SRDict/PS-IRN/experiments/01_IRN_DB_x2_scratch_DIV2K399000/models/399000_G.pth
+  pretrain_model_G: /home/ices/yl/SRDict/PS-IRN/experiments/01_IRN_DB_x2_scratch_DIV2K_norm_simple_/models/45000_G.pth
   strict_load: true
   resume_state: ~
 
@@ -60,7 +60,7 @@ test_LR_ref: true
 #### training settings: learning rate scheme, loss
 
 train:
-  lr_G: !!float 1e-4
+  lr_G: !!float 5e-5
   # lr_G: !!float 1e-5
   beta1: 0.9
   beta2: 0.999
@@ -71,11 +71,11 @@ train:
   get_batch_method: repeat
 
   warmup_iter: -1  # no warm up
-  # lr_scheme: MultiStepLR
-  # lr_steps: [200000, 400000, 600000, 800000]
-  # lr_gamma: 0.5
-  lr_scheme: LinearLR
-  lr_steps: 1000000
+  lr_scheme: MultiStepLR
+  # lr_steps: [100000, 200000, 300000, 400000]
+  lr_steps: [30000, 60000, 90000, 120000, 150000]
+  lr_gamma: 0.5
+
   pixel_criterion_forw: l2
   # pixel_criterion_back: l1
   pixel_criterion_back: l2

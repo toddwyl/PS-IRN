@@ -1,12 +1,12 @@
 
 #### general settings
 
-name: 01_IRN_DB_x2_scratch_DIV2K
+name: 01_IRN_DB_x2_scratch_DIV2K_norm_delsig
 use_tb_logger: true
 model: IRN
 distortion: sr
 scale: 2
-gpu_ids: [1]
+gpu_ids: [0]
 
 
 #### datasets
@@ -45,22 +45,22 @@ network_G:
   block_num: [8]
   scale: 2
   init: xavier
-  # instance_norm: true
-  instance_norm: false
+  instance_norm: true
+  # instance_norm: false
 
 
 #### path
 
 path:
-  pretrain_model_G: /home/ices/yl/SRDict/PS-IRN/experiments/01_IRN_DB_x2_scratch_DIV2K399000/models/399000_G.pth
-  strict_load: true
+  pretrain_model_G: ~
+  strict_load: false
   resume_state: ~
 
 test_LR_ref: true
 #### training settings: learning rate scheme, loss
 
 train:
-  lr_G: !!float 1e-4
+  lr_G: !!float 2e-4
   # lr_G: !!float 1e-5
   beta1: 0.9
   beta2: 0.999
@@ -71,11 +71,10 @@ train:
   get_batch_method: repeat
 
   warmup_iter: -1  # no warm up
-  # lr_scheme: MultiStepLR
-  # lr_steps: [200000, 400000, 600000, 800000]
-  # lr_gamma: 0.5
-  lr_scheme: LinearLR
-  lr_steps: 1000000
+  lr_scheme: MultiStepLR
+  lr_steps: [100000, 200000, 300000, 400000]
+  lr_gamma: 0.5
+
   pixel_criterion_forw: l2
   # pixel_criterion_back: l1
   pixel_criterion_back: l2

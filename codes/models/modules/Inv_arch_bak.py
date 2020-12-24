@@ -9,6 +9,7 @@ from models.modules.jacobian_calc import JacobianReg
 class psi(nn.Module):
     def __init__(self, block_size):
         super(psi, self).__init__()
+        self.name = 'psi'
         self.block_size = block_size
         self.block_size_sq = block_size*block_size
 
@@ -17,7 +18,7 @@ class psi(nn.Module):
         bs, d, h, w = inpt.shape
         return inpt.view(bs, bl, bl, int(d // bl_sq), h, w).permute(0, 3, 4, 1, 5, 2).reshape(bs, -1, h * bl, w * bl)
 
-    def forward(self, inpt, rev=False, calc_jac=False):
+    def forward(self, inpt, rev=False):
         if not rev:
             bl, bl_sq = self.block_size, self.block_size_sq
             bs, d, new_h, new_w = inpt.shape[0], inpt.shape[1], int(
@@ -26,16 +27,13 @@ class psi(nn.Module):
                 0, 3, 5, 1, 2, 4).reshape(bs, d*bl_sq, new_h, new_w)
         else:
             out = self.inverse(inpt)
-        if calc_jac:
-            return out, 1
-        else:
-            return out
+        return out
 
 
 class InvBlockExp(nn.Module):
     def __init__(self, subnet_constructor, channel_num, channel_split_num, clamp=1.):
         super(InvBlockExp, self).__init__()
-
+        self.name = 'InvBlockExp'
         self.split_len1 = channel_split_num
         self.split_len2 = channel_num - channel_split_num
 
@@ -47,9 +45,10 @@ class InvBlockExp(nn.Module):
         self.K = subnet_constructor(self.split_len2, self.split_len1)
         self.Jacobian = JacobianReg()
 
-    def forward(self, x, rev=False, calc_jac=False):
-        x1, x2 = (x.narrow(1, 0, self.split_len1), x.narrow(
-            1, self.split_len1, self.split_len2))
+    def forward(self, x1, x2=None, rev=False, cat=False):
+        if x2 is None:
+            x1, x2 = (x1.narrow(1, 0, self.split_len1), x1.narrow(
+                1, self.split_len1, self.split_len2))
 
         if not rev:
             self.s2 = self.clamp * (torch.sigmoid(self.K(x2)) * 2 - 1)
@@ -63,26 +62,16 @@ class InvBlockExp(nn.Module):
             self.s2 = self.clamp * (torch.sigmoid(self.K(y2)) * 2 - 1)
             y1 = (x1 - self.F(y2)).div(torch.exp(self.s2))
             # y1 = (x1 - self.F(y2)).div(torch.exp(self.beta))
-        if calc_jac:
-            Jac_Block = self.Jacobian(x1, y1) + self.Jacobian(x1, y2) + self.Jacobian(
-                x2, y1) + self.Jacobian(x2, y2)
-            return torch.cat((y1, y2), 1), Jac_Block
-        else:
+        if cat:
             return torch.cat((y1, y2), 1)
-
-    def jacobian(self, x, rev=False):
-        if not rev:
-            jac = torch.sum(self.s)
         else:
-            jac = -torch.sum(self.s)
-
-        return jac / x.shape[0]
+            return y1, y2
 
 
 class InvZipBlock(nn.Module):
     def __init__(self, subnet_constructor, channel_num, channel_split_num, clamp=1.):
         super(InvZipBlock, self).__init__()
-
+        self.name = 'InvZipBlock'
         self.split_len1 = channel_split_num
         self.split_len2 = channel_num - channel_split_num
 
@@ -96,9 +85,10 @@ class InvZipBlock(nn.Module):
         self.alpha2 = nn.Parameter(torch.FloatTensor([1.]), requires_grad=True)
         self.Jacobian = JacobianReg()
 
-    def forward(self, x, rev=False, calc_jac=False):
-        x1, x2 = (x.narrow(1, 0, self.split_len1), x.narrow(
-            1, self.split_len1, self.split_len2))
+    def forward(self, x1, x2=None, rev=False, cat=False):
+        if x2 is None:
+            x1, x2 = (x1.narrow(1, 0, self.split_len1), x1.narrow(
+                1, self.split_len1, self.split_len2))
 
         if not rev:
             y1 = self.alpha1 * self.beta2 * (x1 + self.F(x2))
@@ -106,25 +96,16 @@ class InvZipBlock(nn.Module):
         else:
             y2 = (x2 - self.alpha2 * self.G(x1.div(self.beta2))).div(self.beta1)
             y1 = x1.div(self.alpha1 * self.beta2) - self.F(y2)
-        if calc_jac:
-            Jac_Block = self.Jacobian(x1, y1) + self.Jacobian(x1, y2) + self.Jacobian(
-                x2, y1) + self.Jacobian(x2, y2)
-            return torch.cat((y1, y2), 1), Jac_Block
-        else:
+        if cat:
             return torch.cat((y1, y2), 1)
-
-    def jacobian(self, x, rev=False):
-        if not rev:
-            jac = torch.sum(self.s)
         else:
-            jac = -torch.sum(self.s)
-
-        return jac / x.shape[0]
+            return y1, y2
 
 
 class HaarDownsampling(nn.Module):
     def __init__(self, channel_in):
         super(HaarDownsampling, self).__init__()
+        self.name = 'HaarDownsampling'
         self.channel_in = channel_in
 
         self.haar_weights = torch.ones(4, 1, 2, 2)
@@ -142,7 +123,7 @@ class HaarDownsampling(nn.Module):
         self.haar_weights = nn.Parameter(self.haar_weights)
         self.haar_weights.requires_grad = False
 
-    def forward(self, x, rev=False, calc_jac=False):
+    def forward(self, x, rev=False):
         if not rev:
             self.elements = x.shape[1] * x.shape[2] * x.shape[3]
             self.last_jac = self.elements / 4 * np.log(1 / 16.)
@@ -165,9 +146,6 @@ class HaarDownsampling(nn.Module):
                 [x.shape[0], self.channel_in * 4, x.shape[2], x.shape[3]])
             out = F.conv_transpose2d(out, self.haar_weights, bias=None, stride=2,
                                      groups=self.channel_in)
-        if calc_jac:
-            return out, 1
-        else:
             return out
 
     def jacobian(self, x, rev=False):
@@ -178,9 +156,11 @@ class InvRescaleNet(nn.Module):
     def __init__(self, channel_in=3, channel_out=3, subnet_constructor=None, block_num=[],
                  down_num=1, scale=2, preprocess_op='Haar'):
         super(InvRescaleNet, self).__init__()
-
+        self.name = 'InvRescaleNet'
         operations = []
         current_channel = channel_in
+        self.split_len1 = []
+        self.split_len2 = []
         if preprocess_op == 'Haar':
             op = HaarDownsampling(current_channel)
         elif preprocess_op == 'PixelShuffle':
@@ -191,30 +171,53 @@ class InvRescaleNet(nn.Module):
             # b = HaarDownsampling(current_channel)
             b = op
             operations.append(b)
+            self.split_len1.append(0)
+            self.split_len2.append(0)
             current_channel *= 4
             for j in range(block_num[i]):
                 b = InvBlockExp(subnet_constructor,
                                 current_channel, channel_out)
                 operations.append(b)
-
+                self.split_len1.append(channel_out)
+                self.split_len2.append(current_channel - channel_out)
+        self.Jacobian = JacobianReg()
         self.operations = nn.ModuleList(operations)
 
     def forward(self, x, rev=False, calc_jac=False):
-        out = x
         if not rev:
-            for idx, op in enumerate(self.operations):
-                out = op.forward(out, rev)
+            x_ps = self.operations[0].forward(x, rev)
+            x1, x2 = (x_ps.narrow(1, 0, self.split_len1[1]), x_ps.narrow(
+                1, self.split_len1[1], self.split_len2[1]))
+            y1, y2 = x1, x2
+            for idx, op in enumerate(self.operations[1:]):
+                i = idx+1
+                if op.name == 'HaarDownsampling' or op.name == 'psi':
+                    y_ps = op.forward(torch.cat((y1, y2), dim=1), rev)
+                    y1, y2 = (y_ps.narrow(1, 0, self.split_len1[i + 1]), y_ps.narrow(
+                        1, self.split_len1[i + 1], self.split_len2[i + 1]))
+                else:
+                    y1, y2 = op.forward(y1, y2, rev)
+            out = torch.cat((y1, y2), dim=1)
         else:
-            if calc_jac:
-                Jac_G_inv = 1.
-                for idx, op in enumerate(reversed(self.operations)):
-                    out, Jac_B = op.forward(out, rev, calc_jac=calc_jac)
-                    Jac_G_inv *= Jac_B
-                return out, Jac_G_inv
-            else:
-                for idx, op in enumerate(reversed(self.operations)):
-                    out = op.forward(out, rev)
-        return out
+            len_op = len(self.operations)
+            x1, x2 = (x.narrow(1, 0, self.split_len1[len_op-1]), x.narrow(
+                1, self.split_len1[len_op-1], self.split_len2[len_op-1]))
+            y1, y2 = x1, x2
+            for idx, op in enumerate(reversed(self.operations[1:])):
+                i = len_op - idx - 1
+                if op.name == 'HaarDownsampling' or op.name == 'psi':
+                    y_ps = op.forward(torch.cat((y1, y2), dim=1), rev)
+                    y1, y2 = (y_ps.narrow(1, 0, self.split_len1[i - 1]), y_ps.narrow(
+                        1, self.split_len1[i - 1], self.split_len2[i - 1]))
+                else:
+                    y1, y2 = op.forward(y1, y2, rev)
+            out = self.operations[0].forward(torch.cat((y1, y2), dim=1), rev)
+        if calc_jac:
+            jac = self.Jacobian(x1, y1) + self.Jacobian(x1, y2) + \
+                self.Jacobian(x2, y1) + self.Jacobian(x2, y2)
+            return out, jac
+        else:
+            return out
 
 
 class InvZipNet(nn.Module):
@@ -223,7 +226,7 @@ class InvZipNet(nn.Module):
         super(InvZipNet, self).__init__()
 
         operations = []
-
+        self.name = 'InvZipNet'
         current_channel = channel_in
         if preprocess_op == 'Haar':
             op = HaarDownsampling(current_channel)

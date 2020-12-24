@@ -30,6 +30,15 @@ class MultiStepLR_Restart(_LRScheduler):
             for group in self.optimizer.param_groups
         ]
 
+class LinearLR_Restart(_LRScheduler):
+    def __init__(self, optimizer, total_steps, restarts=None, restart_weights=None, gamma=0.5, last_epoch=-1):
+        self.total_steps = total_steps
+        super(LinearLR_Restart, self).__init__(optimizer, last_epoch)
+
+    def get_lr(self):
+        return [base_lr * (1 - self.last_epoch / float(self.total_steps))
+                for base_lr in self.base_lrs]
+
 
 class CosineAnnealingLR_Restart(_LRScheduler):
     def __init__(self, optimizer, T_period, restarts=None, weights=None, eta_min=0, last_epoch=-1):

@@ -17,14 +17,20 @@ def define_G(opt):
     if model_name is None:
         model_name = 'InvRescaleNet'
     subnet_type = which_model['subnet_type']
+    print(subnet_type)
     if opt_net['init']:
         init = opt_net['init']
     else:
         init = 'xavier'
+
+    if opt_net['clamp']:
+        clamp = opt_net['clamp']
+    else:
+        clamp = 1.
     model_dict = {'InvRescaleNet': InvRescaleNet, 'InvZipNet': InvZipNet}
     down_num = int(math.log(opt_net['scale'], 2))
     netG = model_dict[model_name](opt_net['in_nc'], opt_net['out_nc'], subnet(subnet_type, init, instance_norm=opt_net['instance_norm']),
-                                  opt_net['block_num'], down_num=down_num, scale=opt_net['scale'], preprocess_op=opt_net['preprocess_op'])
+                                  opt_net['block_num'], down_num=down_num, scale=opt_net['scale'], preprocess_op=opt_net['preprocess_op'], clamp=clamp)
 
     return netG
 
