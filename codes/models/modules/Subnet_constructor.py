@@ -63,15 +63,14 @@ class PANBlock(nn.Module):
 
 
 class PhyBlock(nn.Module):
-    def __init__(self, channel_in, channel_out, init='xavier', gc=32, bias=True):
+    def __init__(self, channel_in, channel_out, init='xavier', gc=49, bias=True):
         super(PhyBlock, self).__init__()
         self.channel_in = channel_in
-        self.F_hidden_dim = 49
+        self.F_hidden_dim = gc
         self.filter_size = 3
         self.padding = 3//2
         self.bias = bias
         self.F = nn.Sequential()
-        self.F.add_module('bn1', nn.GroupNorm(4, channel_in))
         self.F.add_module('conv1', nn.Conv2d(in_channels=channel_in, out_channels=self.F_hidden_dim,
                                              kernel_size=self.filter_size, stride=(1, 1), padding=self.padding))
         self.F.add_module('conv2', nn.Conv2d(in_channels=self.F_hidden_dim,
@@ -82,6 +81,12 @@ class PhyBlock(nn.Module):
                                   out_channels=channel_out,
                                   kernel_size=(3, 3),
                                   padding=(1, 1), bias=self.bias)
+        if init == 'xavier':
+            mutil.initialize_weights_xavier(
+                [self.conv, self.convgate, self.F.conv1, self.F.conv2], 0.1)
+        else:
+            mutil.initialize_weights(
+                [self.conv, self.convgate, self.F.conv1, self.F.conv2], 0.1)
 
     def forward(self, x):
         # x [batch_size, hidden_dim, height, width]

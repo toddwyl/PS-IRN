@@ -1,7 +1,7 @@
 
 #### general settings
 
-name: Simple_x2
+name: clamp_16_x2_PSJN
 use_tb_logger: true
 model: IRN
 distortion: sr
@@ -38,34 +38,31 @@ datasets:
 network_G:
   which_model_G:
       model_name: InvRescaleNet
-      # subnet_type: DBNet
-      subnet_type: 
-        F: PAN
-        G: Conv
-        H: DBNet
-        K: DBNet
+      subnet_type: DBNet
   preprocess_op: PixelShuffle
   in_nc: 3
   out_nc: 3
   block_num: [8]
   scale: 2
   init: xavier
-  clamp: 1
+  clamp: 1.
+  # instance_norm: true
   instance_norm: false
 
 
 #### path
 
 path:
-  pretrain_model_G: /home/ices/yl/SRDict/PS-IRN/experiments/Simple_x2/models/72000_G.pth
+  pretrain_model_G: ~
   strict_load: true
-  resume_state: /home/ices/yl/SRDict/PS-IRN/experiments/Simple_x2/training_state/72000.state
+  resume_state: ~
 
 test_LR_ref: true
 #### training settings: learning rate scheme, loss
 
 train:
   lr_G: !!float 1e-4
+  # lr_G: !!float 1e-5
   beta1: 0.9
   beta2: 0.999
   niter: 1000000
@@ -76,10 +73,14 @@ train:
 
   warmup_iter: -1  # no warm up
   lr_scheme: MultiStepLR
+  # lr_steps: [200000, 400000, 600000, 800000]
   lr_steps: [30000, 60000, 90000, 120000, 150000, 180000, 210000, 240000, 270000, 300000, 330000, 360000, 390000, 420000]
   lr_gamma: 0.5
+  # lr_scheme: LinearLR
+  # lr_steps: 1000000
   pixel_criterion_forw: l2
-  pixel_criterion_back: l2
+  pixel_criterion_back: l1
+  # pixel_criterion_back: l2
 
   manual_seed: 10
 
@@ -91,6 +92,7 @@ train:
   lambda_Jac_G: 1
   weight_decay_G: !!float 1e-5
   gradient_clipping: 10
+  # gradient_clipping: 10
 
 
 #### logger
