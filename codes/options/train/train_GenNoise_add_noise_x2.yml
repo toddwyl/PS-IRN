@@ -1,7 +1,7 @@
 
 #### general settings
 
-name: clamp_12_x2_PSJN_addNorm1-255_weightconv
+name: train_GenNoise_add_noise_x2
 use_tb_logger: true
 model: IRN
 distortion: sr
@@ -38,15 +38,16 @@ datasets:
 network_G:
   which_model_G:
       model_name: InvRescaleNet
-      subnet_type: RDBNet
+      subnet_type: DBNet
+  which_model_R: GenNoise
+  clamp_R: 0.7
   preprocess_op: PixelShuffle
   in_nc: 3
   out_nc: 3
-  # out_nc: 6
   block_num: [8]
   scale: 2
   init: xavier
-  clamp: 1.2
+  clamp: 1.5
   # instance_norm: true
   instance_norm: false
 
@@ -54,16 +55,16 @@ network_G:
 #### path
 
 path:
-  pretrain_model_G: /home/ices/yl/SRDict/PS-IRN/experiments/clamp_12_x2_PSJN_noN(01)/models/99000_G.pth
-  strict_load: false
+  pretrain_model_G: /home/ices/yl/SRDict/PS-IRN/experiments/clamp_16_x2_PSJN/models/258000_G.pth
+  pretrain_model_R: ~
+  strict_load: False
   resume_state: ~
 
 test_LR_ref: true
 #### training settings: learning rate scheme, loss
-var: ~ 
+
 train:
   lr_G: !!float 1e-4
-  # lr_G: !!float 1e-5
   beta1: 0.9
   beta2: 0.999
   niter: 1000000
@@ -77,8 +78,7 @@ train:
   # lr_steps: [200000, 400000, 600000, 800000]
   lr_steps: [30000, 60000, 90000, 120000, 150000, 180000, 210000, 240000, 270000, 300000, 330000, 360000, 390000, 420000]
   lr_gamma: 0.5
-  # lr_scheme: LinearLR
-  # lr_steps: 1000000
+  
   pixel_criterion_forw: l2
   pixel_criterion_back: l1
   # pixel_criterion_back: l2
@@ -87,13 +87,12 @@ train:
 
   val_freq: !!float 3e3
 
-  lambda_fit_forw: 2
-  lambda_rec_back: 2
-  lambda_ce_forw: 1
   lambda_Jac_G: 1
+  lambda_fit_forw: 4.
+  lambda_rec_back: 1
+  lambda_ce_forw: 1
   weight_decay_G: !!float 1e-5
   gradient_clipping: 10
-  # gradient_clipping: 10
 
 
 #### logger

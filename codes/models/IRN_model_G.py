@@ -1,14 +1,15 @@
 import logging
 from collections import OrderedDict
-import itertools
+
 import torch
 import torch.nn as nn
 from torch.nn.parallel import DataParallel, DistributedDataParallel
 import models.networks as networks
 import models.lr_scheduler as lr_scheduler
 from .base_model import BaseModel
-from models.modules.loss import ReconstructionLoss
+from models.modules.loss import ReconstructionLoss, CharbonnierLoss
 from models.modules.Quantization import Quantization
+from models.modules.jacobian_calc import JacobianReg
 logger = logging.getLogger('base')
 
 
@@ -20,6 +21,8 @@ class IRNModel(BaseModel):
             self.rank = torch.distributed.get_rank()
         else:
             self.rank = -1  # non dist training
+
+        self.var = opt['var']
         train_opt = opt['train']
         test_opt = opt['test']
         self.train_opt = train_opt
@@ -28,17 +31,12 @@ class IRNModel(BaseModel):
             'zeros': self.zeros_batch, 'repeat': self.z_repeat_batch}
         self.get_batch_method = get_batch_method_dict[self.train_opt['get_batch_method']]
         self.netG = networks.define_G(opt).to(self.device)
-        self.netR = networks.define_R(opt).to(self.device)
         if opt['dist']:
             self.netG = DistributedDataParallel(
                 self.netG, device_ids=[torch.cuda.current_device()])
-            self.netR = DistributedDataParallel(
-                self.netR, device_ids=[torch.cuda.current_device()])
         else:
             self.netG = DataParallel(self.netG)
-            self.netR = DataParallel(self.netR)
         # print network
-        self.models = [self.netG, self.netR]
         self.print_network()
         self.load()
 
@@ -46,9 +44,9 @@ class IRNModel(BaseModel):
 
         if self.is_train:
             self.netG.train()
-            self.netR.train()
 
             # loss
+            self.CharbonnierLoss = CharbonnierLoss()
             self.Reconstruction_forw = ReconstructionLoss(
                 losstype=self.train_opt['pixel_criterion_forw'])
             self.Reconstruction_back = ReconstructionLoss(
@@ -57,17 +55,17 @@ class IRNModel(BaseModel):
             # optimizers
             wd_G = train_opt['weight_decay_G'] if train_opt['weight_decay_G'] else 0
             optim_params = []
-            for k, v in itertools.chain(self.netG.named_parameters(), self.netR.named_parameters()):
+            for k, v in self.netG.named_parameters():
                 if v.requires_grad:
                     optim_params.append(v)
                 else:
                     if self.rank <= 0:
                         logger.warning(
                             'Params [{:s}] will not optimize.'.format(k))
-            self.optimizer = torch.optim.Adam(optim_params, lr=train_opt['lr_G'],
-                                              weight_decay=wd_G,
-                                              betas=(train_opt['beta1'], train_opt['beta2']))
-            self.optimizers.append(self.optimizer)
+            self.optimizer_G = torch.optim.Adam(optim_params, lr=train_opt['lr_G'],
+                                                weight_decay=wd_G,
+                                                betas=(train_opt['beta1'], train_opt['beta2']), amsgrad=True)
+            self.optimizers.append(self.optimizer_G)
 
             # schedulers
             if train_opt['lr_scheme'] == 'MultiStepLR':
@@ -104,26 +102,59 @@ class IRNModel(BaseModel):
         # return torch.zeros(tuple(dims)).to(self.device)
 
     def z_repeat_batch(self, dims, LR=None):
-        ratio = int(dims[1] / LR.shape[1])
-        return LR.repeat(1, ratio, 1, 1)
+        repeat_num = int(dims[1] / LR.shape[1])
+        return LR.repeat(1, repeat_num, 1, 1)
 
     def zeros_batch(self, dims, LR=None):
         return torch.zeros(tuple(dims)).to(self.device)
 
-    def loss_forward(self, out, y, z, z_gt=None):
-        l_forw_fit = self.train_opt['lambda_fit_forw'] * \
-            self.Reconstruction_forw(out, y)
-        if z_gt is None:
-            z_gt = torch.zeros_like(z)
-        l_forw_ce = self.train_opt['lambda_ce_forw'] * \
-            self.Reconstruction_forw(z, z_gt)
+    def ChannelAdd(self, y, channel=3):
+        # y:(16, 12, 72, 72)
+        B, C, H, W = y.shape
+        y_channel = torch.zeros((B, channel, H, W)).to(self.device)
+        repeat_num = float(C / channel)
+        for i in range(C):
+            y_channel[:, i % channel] += y[:, i]
+        return y_channel/repeat_num
 
-        return l_forw_fit, l_forw_ce
+    def AddNoise(self, y, zdim):
+        B, channel, H, W = y.shape
+        C = int(zdim)
+        repeat_num = int(C/channel)
+        lrs = y.repeat(1, repeat_num, 1, 1)
+        # return lrs + torch.randn(lrs.shape).to(self.device)
+        # add RGB channel by randn
+
+        if self.var is None:
+            self.var = 1/255.
+        Randns = [self.var * torch.randn((B, repeat_num, H, W)).to(
+            self.device) for _ in range(channel)]
+        for i in range(repeat_num):
+            for j in range(channel):
+                lrs[:, i + j] = lrs[:, i + j] + Randns[j][:, i]
+
+        # TODO: clamp or not clamp ?
+        # lrs = torch.clamp(lrs, min=0, max=1)
+        return lrs
+
+    def loss_forward(self, y, y_sum, LR):
+        # l_forw_fit = self.train_opt['lambda_fit_forw'] * \
+        #     self.Reconstruction_forw(y, LR)
+        # if y.shape != LR.shape:
+        repeat_num = int(y.shape[1]/LR.shape[1])
+        l_forw_fit = self.train_opt['lambda_fit_forw'] * \
+            self.Reconstruction_forw(y, LR.repeat(1, repeat_num, 1, 1))
+        l_forw_sum = self.train_opt['lambda_fit_forw'] * \
+            self.Reconstruction_forw(y_sum, LR)
+        # else:
+        #     l_forw_fit = self.train_opt['lambda_fit_forw'] * \
+        #         self.CharbonnierLoss(y, LR)
+        return l_forw_fit, l_forw_sum
 
     def loss_backward(self, x, y):
         x_samples = self.netG(x=y, rev=True)
         x_samples_image = x_samples[:, :3, :, :]
-        l_back_rec = self.train_opt['lambda_rec_back'] * self.Reconstruction_back(
+        l_back_rec = self.train_opt['lambda_rec_back'] * self.CharbonnierLoss(
             x, x_samples_image)
         l2_back_rec = self.train_opt['lambda_rec_back'] * self.Reconstruction_forw(
             x, x_samples_image)
@@ -135,6 +166,7 @@ class IRNModel(BaseModel):
 
     def warmup(self, step):
         quant = False
+        self.train_opt['train_LR_ref_start'] = 0.
         train_LR_ref = False
         calc_jac = False
         if step > self.train_opt['quant_start']:
@@ -146,38 +178,43 @@ class IRNModel(BaseModel):
         return quant, train_LR_ref, calc_jac
 
     def optimize_parameters(self, step):
-        self.optimizer.zero_grad()
+        self.optimizer_G.zero_grad()
         quant, train_LR_ref, calc_jac = self.warmup(step)
         # forward downscaling
         self.input = self.real_H
         self.input.requires_grad = True
         self.output = self.netG(x=self.input)
         y1, y2 = self.output[:, :3, :, :], self.output[:, 3:, :, :]
-        if quant:
-            y1 = self.Quantization(y1)
+
         noise = self.netR(y1)
-        y2 = y2 - noise
+        y = y2 + noise
+
+        # TODO: split y and calc loss in repeat mode
         if calc_jac:
             Jac_G_inv = self.loss_Jac_backward(self.output)
-        zshape = y2.shape
-        LR_ref = self.ref_L.detach()
-        z_gt = self.get_batch_method(zshape, LR_ref)
-        l_forw_fit, l_forw_ce = self.loss_forward(y1, LR_ref, y2, z_gt)
 
+        # zshape = y2.shape
+        zdim = self.output.shape[1]
+        LR_ref = self.ref_L.detach()
+        y = self.ChannelAdd(self.output)
+        # l_forw_fit = self.loss_forward(y, LR_ref)
+        l_forw_fit, l_forw_sum = self.loss_forward(self.output, y, LR_ref)
+
+        # backward upscaling
         if not train_LR_ref:
-            # backward upscaling
-            LR = y1
-            noise_hat = self.netR(LR).detach()
-            y_ = torch.cat(
-                (LR, self.get_batch_method(zshape, LR)+noise_hat), dim=1)
-            l_back_rec, l2_back_rec = self.loss_backward(self.real_H, y_)
+            if quant:
+                LR = self.Quantization(y)
+            else:
+                LR = y
+            y_ = self.AddNoise(LR, zdim)
         else:
-            noise_hat = self.netR(LR_ref).detach()
-            y_gt = torch.cat((LR_ref, z_gt+noise_hat), dim=1)
-            l_back_rec, l2_back_rec = self.loss_backward(self.real_H, y_gt)
+            y_ = self.AddNoise(LR_ref, zdim)
+
+        l_back_rec, l2_back_rec = self.loss_backward(self.real_H, y_)
 
         # total loss
-        loss = l_forw_fit + l_back_rec + l_forw_ce
+        # loss = l_forw_fit + l_back_rec
+        loss = l_forw_fit + l_forw_sum + l_back_rec
         if calc_jac:
             loss += Jac_G_inv
         loss.backward()
@@ -187,12 +224,13 @@ class IRNModel(BaseModel):
             nn.utils.clip_grad_norm_(
                 self.netG.parameters(), self.train_opt['gradient_clipping'])
 
-        self.optimizer.step()
+        self.optimizer_G.step()
         # set log
-        self.log_dict['l2_forw'] = l_forw_fit.item() + l_forw_ce.item()
+        # self.log_dict['l2_forw'] = l_forw_fit.item() + l_forw_ce.item()
+        # self.log_dict['l2_forw'] = l_forw_fit.item()
         self.log_dict['l2_back_rec'] = l2_back_rec.item()
         self.log_dict['l_forw_fit'] = l_forw_fit.item()
-        self.log_dict['l_forw_ce'] = l_forw_ce.item()
+        self.log_dict['l_forw_sum'] = l_forw_sum.item()
         self.log_dict['l_back_rec'] = l_back_rec.item()
         if calc_jac:
             self.log_dict['Jac_G_inv'] = Jac_G_inv.item()
@@ -203,8 +241,7 @@ class IRNModel(BaseModel):
         input_dim = Lshape[1]
         self.input = self.real_H
 
-        zshape = [Lshape[0], input_dim *
-                  (self.opt['scale']**2) - Lshape[1], Lshape[2], Lshape[3]]
+        zdim = input_dim * (self.opt['scale']**2)
 
         self.netG.eval()
         with torch.no_grad():
@@ -212,14 +249,36 @@ class IRNModel(BaseModel):
                 LR_ref = self.ref_L.detach()
                 self.forw_L = LR_ref
             else:
-                self.forw_L = self.netG(x=self.input)[:, :3, :, :]
+                out = self.netG(x=self.input)
+                self.forw_L = self.ChannelAdd(out)
                 self.forw_L = self.Quantization(self.forw_L)
-            noise_L = self.netR(self.forw_L)
-            y_forw = torch.cat(
-                (self.forw_L, self.get_batch_method(zshape, self.forw_L) + noise_L), dim=1)
+            y_forw = self.AddNoise(self.forw_L, zdim)
             self.fake_H = self.netG(x=y_forw, rev=True)[:, :3, :, :]
 
         self.netG.train()
+
+    def downscale(self, HR_img):
+        self.netG.eval()
+        with torch.no_grad():
+            out = self.netG(x=HR_img)
+            LR_img = self.ChannelAdd(out)
+            LR_img = self.Quantization(LR_img)
+        self.netG.train()
+
+        return LR_img
+
+    # def upscale(self, LR_img, scale, gaussian_scale=1):
+    #     Lshape = LR_img.shape
+    #     zshape = [Lshape[0], Lshape[1] * (scale**2 - 1), Lshape[2], Lshape[3]]
+    #     y_ = torch.cat((LR_img, gaussian_scale *
+    #                     self.gaussian_batch(zshape)), dim=1)
+
+    #     self.netG.eval()
+    #     with torch.no_grad():
+    #         HR_img = self.netG(x=y_, rev=True)[:, :3, :, :]
+    #     self.netG.train()
+
+    #     return HR_img
 
     def get_current_log(self):
         return self.log_dict
@@ -233,18 +292,16 @@ class IRNModel(BaseModel):
         return out_dict
 
     def print_network(self):
-        models = self.models
-        for model in models:
-            s, n = self.get_network_description(model)
-            if isinstance(model, nn.DataParallel) or isinstance(model, DistributedDataParallel):
-                net_struc_str = '{} - {}'.format(model.__class__.__name__,
-                                                 model.module.__class__.__name__)
-            else:
-                net_struc_str = '{}'.format(model.__class__.__name__)
-            if self.rank <= 0:
-                logger.info(
-                    'Network G or R structure: {}, with parameters: {:,d}'.format(net_struc_str, n))
-                logger.info(s)
+        s, n = self.get_network_description(self.netG)
+        if isinstance(self.netG, nn.DataParallel) or isinstance(self.netG, DistributedDataParallel):
+            net_struc_str = '{} - {}'.format(self.netG.__class__.__name__,
+                                             self.netG.module.__class__.__name__)
+        else:
+            net_struc_str = '{}'.format(self.netG.__class__.__name__)
+        if self.rank <= 0:
+            logger.info(
+                'Network G structure: {}, with parameters: {:,d}'.format(net_struc_str, n))
+            logger.info(s)
 
     def load(self):
         load_path_G = self.opt['path']['pretrain_model_G']
@@ -253,13 +310,5 @@ class IRNModel(BaseModel):
             self.load_network(load_path_G, self.netG,
                               self.opt['path']['strict_load'])
 
-        load_path_R = self.opt['path']['pretrain_model_R']
-        if load_path_R is not None:
-            logger.info(
-                'Loading model for R [{:s}] ...'.format(load_path_R))
-            self.load_network(load_path_R, self.netR,
-                              self.opt['path']['strict_load'])
-
     def save(self, iter_label):
         self.save_network(self.netG, 'G', iter_label)
-        self.save_network(self.netR, 'R', iter_label)

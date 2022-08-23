@@ -58,14 +58,18 @@ class InvBlockExp(nn.Module):
 
         if not rev:
             self.s2 = self.clamp * (torch.sigmoid(self.K(x2)) * 2 - 1)
-            y1 = x1.mul(torch.exp(self.s2)) + self.F(x2)
+            # y1 = x1.mul(torch.exp(self.s2)) + self.F(x2)
+            y1 = x1.mul(torch.exp(self.s2)+1) + self.F(x2)
             self.s1 = self.clamp * (torch.sigmoid(self.H(y1)) * 2 - 1)
-            y2 = x2.mul(torch.exp(self.s1)) + self.G(y1)
+            # y2 = x2.mul(torch.exp(self.s1)) + self.G(y1)
+            y2 = x2.mul(torch.exp(self.s1)+1) + self.G(y1)
         else:
             self.s1 = self.clamp * (torch.sigmoid(self.H(x1)) * 2 - 1)
-            y2 = (x2 - self.G(x1)).div(torch.exp(self.s1))
+            # y2 = (x2 - self.G(x1)).div(torch.exp(self.s1))
+            y2 = (x2 - self.G(x1)).div(torch.exp(self.s1)+1)
             self.s2 = self.clamp * (torch.sigmoid(self.K(y2)) * 2 - 1)
-            y1 = (x1 - self.F(y2)).div(torch.exp(self.s2))
+            # y1 = (x1 - self.F(y2)).div(torch.exp(self.s2))
+            y1 = (x1 - self.F(y2)).div(torch.exp(self.s2)+1)
         if calc_jac:
             Jac_Block = self.Jacobian(x1, y1) + self.Jacobian(x1, y2) + self.Jacobian(
                 x2, y1) + self.Jacobian(x2, y2)

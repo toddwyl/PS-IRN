@@ -1,6 +1,7 @@
 import torch
 import logging
 import models.modules.discriminator_vgg_arch as SRGAN_arch
+from models.modules.GenNoise import GenNoise
 from models.modules.Inv_arch import InvRescaleNet, InvZipNet
 from models.modules.Subnet_constructor import subnet
 import math
@@ -47,6 +48,21 @@ def define_D(opt):
         raise NotImplementedError(
             'Discriminator model [{:s}] not recognized'.format(which_model))
     return netD
+
+
+def define_R(opt):
+    opt_net = opt['network_G']
+    which_model = opt_net['which_model_R']
+
+    if which_model == 'GenNoise':
+        in_ch = opt_net['in_nc']
+        out_ch = in_ch * (opt_net['scale'] ** 2) - opt_net['out_nc']
+        clamp = 1 if opt_net['clamp_R'] is None else opt_net['clamp_R']
+        netR = GenNoise(in_ch, out_ch, clamp=clamp)
+    else:
+        raise NotImplementedError(
+            'Noise Add Rmodel [{:s}] not recognized'.format(which_model))
+    return netR
 
 
 # Define Network used for Perceptual Loss
